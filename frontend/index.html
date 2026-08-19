@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Chinese-Boot | Market Signal Dashboard</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #071014;
+            color: #e8f1f5;
+            font-family: Arial, Helvetica, sans-serif;
+            min-height: 100vh;
+        }
+
+        .app {
+            max-width: 1400px;
+            margin: auto;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .brand h1 {
+            font-size: 25px;
+            letter-spacing: .5px;
+        }
+
+        .brand p {
+            color: #82949d;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+
+        .status {
+            padding: 8px 13px;
+            border: 1px solid #24434c;
+            border-radius: 20px;
+            color: #7ee7a4;
+            font-size: 12px;
+            background: #0b1a1f;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr 1fr auto;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        select,
+        input,
+        button {
+            border: 1px solid #263f48;
+            background: #0c1a20;
+            color: #e8f1f5;
+            border-radius: 9px;
+            padding: 12px;
+            outline: none;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: #42d392;
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #12272e;
+        }
+
+        .primary {
+            background: #137a50;
+            border-color: #1a9b66;
+        }
+
+        .primary:hover {
+            background: #17905e;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 18px;
+        }
+
+        .card {
+            background: #0b171c;
+            border: 1px solid #1d343c;
+            border-radius: 14px;
+            padding: 18px;
+            box-shadow: 0 10px 30px rgba(0,0,0,.18);
+        }
+
+        .card-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .card-title h2 {
+            font-size: 16px;
+        }
+
+        .price {
+            font-size: 30px;
+            font-weight: bold;
+            margin: 8px 0;
+        }
+
+        .symbol-label {
+            color: #8ca0a9;
+            font-size: 13px;
+        }
+
+        .chart-wrap {
+            height: 430px;
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            background:
+                linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .signal-box {
+            text-align: center;
+            padding: 25px 15px;
+            border-radius: 12px;
+            background: #0d2025;
+            border: 1px solid #24414a;
+            margin-bottom: 15px;
+        }
+
+        .signal {
+            font-size: 38px;
+            font-weight: 900;
+            margin: 8px 0;
+        }
+
+        .up {
+            color: #35e58b;
+        }
+
+        .down {
+            color: #ff5d6c;
+        }
+
+        .neutral {
+            color: #f0c75e;
+        }
+
+        .confidence {
+            color: #8da2aa;
+            font-size: 13px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .stat {
+            background: #0d2025;
+            border: 1px solid #1d3942;
+            border-radius: 10px;
+            padding: 12px;
+        }
+
+        .stat small {
+            color: #82959e;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .stat strong {
+            font-size: 16px;
+        }
+
+        .reasons {
+            margin-top: 15px;
+        }
+
+        .reasons h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .reasons ul {
+            padding-left: 18px;
+            color: #a9bbc2;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+
+        .footer-note {
+            margin-top: 18px;
+            color: #63777f;
+            font-size: 11px;
+            text-align: center;
+        }
+
+        .loading {
+            color: #f0c75e;
+        }
+
+        .error {
+            color: #ff6573;
+        }
+
+        @media (max-width: 850px) {
+            .controls {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .chart-wrap {
+                height: 350px;
+            }
+        }
+
+        @media (max-width: 520px) {
+            .app {
+                padding: 12px;
+            }
+
+            header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .controls {
+                grid-template-columns: 1fr;
+            }
+
+            .price {
+                font-size: 25px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="app">
+
+    <header>
+        <div class="brand">
+            <h1>Chinese-Boot Market Analyzer</h1>
+            <p>Real-time market data • Candle analysis • UP/DOWN signal</p>
+        </div>
+
+        <div class="status" id="connectionStatus">
+            ● Connecting...
+        </div>
+    </header>
+
+    <section class="controls">
+
+        <input
+            id="symbolInput"
+            type="text"
+            value="EUR/USD"
+            placeholder="Enter symbol e.g. EUR/USD"
+        >
+
+        <select id="timeframe">
+            <option value="60">1 Minute</option>
+            <option value="300">5 Minutes</option>
+            <option value="900">15 Minutes</option>
+            <option value="1800">30 Minutes</option>
+            <option value="3600">1 Hour</option>
+            <option value="7200">2 Hours</option>
+            <option value="14400">4 Hours</option>
+            <option value="86400">1 Day</option>
+        </select>
+
+        <select id="limit">
+            <option value="50">50 Candles</option>
+            <option value="100" selected>100 Candles</option>
+            <option value="200">200 Candles</option>
+            <option value="500">500 Candles</option>
+        </select>
+
+        <button class="primary" onclick="loadMarket()">
+            Analyze
+        </button>
+
+    </section>
+
+    <div class="grid">
+
+        <main>
+
+            <div class="card">
+
+                <div class="card-title">
+                    <div>
+                        <div class="symbol-label" id="symbolLabel">
+                            EUR/USD
+                        </div>
+
+                        <div class="price" id="price">
+                            --
+                        </div>
+                    </div>
+
+                    <div class="symbol-label" id="timeframeLabel">
+                        1 Minute
+                    </div>
+                </div>
+
+                <div class="chart-wrap">
+                    <canvas id="chart"></canvas>
+                </div>
+
+            </div>
+
+        </main>
+
+        <aside>
+
+            <div class="card">
+
+                <div class="card-title">
+                    <h2>Market Signal</h2>
+                </div>
+
+                <div class="signal-box">
+
+                    <div class="symbol-label">
+                        Next Candle Bias
+                    </div>
+
+                    <div id="signal" class="signal neutral">
+                        WAIT
+                    </div>
+
+                    <div class="confidence">
+                        Confidence:
+                        <strong id="confidence">--</strong>
+                    </div>
+
+                </div>
+
+                <div class="stats">
+
+                    <div class="stat">
+                        <small>EMA 9</small>
+                        <strong id="ema9">--</strong>
+                    </div>
+
+                    <div class="stat">
+                        <small>EMA 21</small>
+                        <strong id="ema21">--</strong>
+                    </div>
+
+                    <div class="stat">
+                        <small>EMA 50</small>
+                        <strong id="ema50">--</strong>
+                    </div>
+
+                    <div class="stat">
+                        <small>RSI</small>
+                        <strong id="rsi">--</strong>
+                    </div>
+
+                    <div class="stat">
+                        <small>MACD</small>
+                        <strong id="macd">--</strong>
+                    </div>
+
+                    <div class="stat">
+                        <small>Score</small>
+                        <strong id="score">--</strong>
+                    </div>
+
+                </div>
+
+                <div class="reasons">
+                    <h3>Analysis Reasons</h3>
+                    <ul id="reasons">
+                        <li>Waiting for market data...</li>
+                    </ul>
+                </div>
+
+            </div>
+
+        </aside>
+
+    </div>
+
+    <div class="footer-note">
+        Technical analysis only. Signals are not guaranteed predictions.
+    </div>
+
+</div>
+
+<script>
+
+const API_BASE = "";
+
+const canvas = document.getElementById("chart");
+const ctx = canvas.getContext("2d");
+
+let candles = [];
+
+function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+
+    ctx.setTransform(
+        devicePixelRatio,
+        0,
+        0,
+        devicePixelRatio,
+        0,
+        0
+    );
+
+    drawChart();
+}
+
+window.addEventListener("resize", resizeCanvas);
+
+
+function drawChart() {
+
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (!candles.length) {
+        ctx.fillStyle = "#687b83";
+        ctx.font = "14px Arial";
+        ctx.fillText(
+            "Waiting for market data...",
+            20,
+            30
+        );
+        return;
+    }
+
+    const visible = candles.slice(-80);
+
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+
+    visible.forEach(c => {
+
+        minPrice = Math.min(
+            minPrice,
+            c.low
+        );
+
+        maxPrice = Math.max(
+            maxPrice,
+            c.high
+        );
+
+    });
+
+    const range = maxPrice - minPrice || 1;
+
+    const padding = 35;
+
+    const chartHeight =
+        height - padding * 2;
+
+    const candleWidth =
+        Math.max(
+            4,
+            (width - 20) / visible.length * 0.65
+        );
+
+    const gap =
+        (width - 20) / visible.length;
+
+    visible.forEach((c, i) => {
+
+        const x =
+            10 +
+            i * gap +
+            gap / 2;
+
+        const openY =
+            padding +
+            (maxPrice - c.open) /
+            range *
+            chartHeight;
+
+        const closeY =
+            padding +
+            (maxPrice - c.close) /
+            range *
+            chartHeight;
+
+        const highY =
+            padding +
+            (maxPrice - c.high) /
+            range *
+            chartHeight;
+
+        const lowY =
+            padding +
+            (maxPrice - c.low) /
+            range *
+            chartHeight;
+
+        const bullish =
+            c.close >= c.open;
+
+        ctx.strokeStyle =
+            bullish
+                ? "#35e58b"
+                : "#ff5d6c";
+
+        ctx.fillStyle =
+            bullish
+                ? "#35e58b"
+                : "#ff5d6c";
+
+        ctx.lineWidth = 1;
+
+        // Wick
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+
+        // Body
+        const bodyTop =
+            Math.min(openY, closeY);
+
+        const bodyHeight =
+            Math.max(
+                1,
+                Math.abs(closeY - openY)
+            );
+
+        ctx.fillRect(
+            x - candleWidth / 2,
+            bodyTop,
+            candleWidth,
+            bodyHeight
+        );
+
+    });
+
+}
+
+
+async function loadMarket() {
+
+    const symbol =
+        document
+            .getElementById("symbolInput")
+            .value
+            .trim();
+
+    const timeframe =
+        Number(
+            document
+                .getElementById("timeframe")
+                .value
+        );
+
+    const limit =
+        Number(
+            document
+                .getElementById("limit")
+                .value
+        );
+
+    if (!symbol) {
+        alert("Please enter a symbol.");
+        return;
+    }
+
+    document.getElementById(
+        "connectionStatus"
+    ).textContent = "● Loading...";
+
+    document.getElementById(
+        "connectionStatus"
+    ).className = "status loading";
+
+    try {
+
+        const candleResponse =
+            await fetch(
+                `${API_BASE}/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe_seconds=${timeframe}&limit=${limit}`
+            );
+
+        if (!candleResponse.ok) {
+            throw new Error(
+                "Candle request failed"
+            );
+        }
+
+        const candleData =
+            await candleResponse.json();
+
+        candles =
+            candleData.candles || [];
+
+        document.getElementById(
+            "symbolLabel"
+        ).textContent = symbol;
+
+        document.getElementById(
+            "timeframeLabel"
+        ).textContent =
+            timeframeLabel(timeframe);
+
+        drawChart();
+
+        const quoteResponse =
+            await fetch(
+                `${API_BASE}/api/quote?symbol=${encodeURIComponent(symbol)}`
+            );
+
+        if (quoteResponse.ok) {
+
+            const quote =
+                await quoteResponse.json();
+
+            document.getElementById(
+                "price"
+            ).textContent =
+                formatPrice(quote.price);
+
+        }
+
+        await runAnalysis(symbol, timeframe);
+
+        document.getElementById(
+            "connectionStatus"
+        ).textContent = "● Market Connected";
+
+        document.getElementById(
+            "connectionStatus"
+        ).className = "status";
+
+    } catch (error) {
+
+        console.error(error);
+
+        document.getElementById(
+            "connectionStatus"
+        ).textContent = "● Data Error";
+
+        document.getElementById(
+            "connectionStatus"
+        ).className = "status error";
+
+        document.getElementById(
+            "reasons"
+        ).innerHTML =
+            `<li class="error">${escapeHtml(error.message)}</li>`;
+
+    }
+
+}
+
+
+async function runAnalysis(symbol, timeframe) {
+
+    if (!candles.length) {
+        return;
+    }
+
+    const payload = {
+
+        symbol: symbol,
+
+        timeframe:
+            timeframeLabel(timeframe),
+
+        candles: candles
+
+    };
+
+    const response =
+        await fetch(
+            `${API_BASE}/api/analyze`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body:
+                    JSON.stringify(payload)
+            }
+        );
+
+    if (!response.ok) {
+        throw new Error(
+            "Analysis request failed"
+        );
+    }
+
+    const data =
+        await response.json();
+
+    if (!data.ok) {
+        throw new Error(
+            data.error ||
+            "Analysis failed"
+        );
+    }
+
+    updateAnalysis(data);
+
+}
+
+
+function updateAnalysis(data) {
+
+    const signal =
+        data.signal || "NEUTRAL";
+
+    const signalElement =
+        document.getElementById("signal");
+
+    signalElement.textContent =
+        signal;
+
+    signalElement.className =
+        "signal " +
+        (
+            signal === "UP"
+                ? "up"
+                : signal === "DOWN"
+                    ? "down"
+                    : "neutral"
+        );
+
+    document.getElementById(
+        "confidence"
+    ).textContent =
+        data.confidence != null
+            ? `${data.confidence}%`
+            : "--";
+
+    document.getElementById(
+        "score"
+    ).textContent =
+        data.score != null
+            ? data.score
+            : "--";
+
+    const indicators =
+        data.indicators || {};
+
+    document.getElementById(
+        "ema9"
+    ).textContent =
+        formatNumber(indicators.ema9);
+
+    document.getElementById(
+        "ema21"
+    ).textContent =
+        formatNumber(indicators.ema21);
+
+    document.getElementById(
+        "ema50"
+    ).textContent =
+        formatNumber(indicators.ema50);
+
+    document.getElementById(
+        "rsi"
+    ).textContent =
+        formatNumber(indicators.rsi4);
+
+    const macd =
+        indicators.macd;
+
+    document.getElementById(
+        "macd"
+    ).textContent =
+        macd &&
+        macd.macd != null
+            ? formatNumber(macd.macd)
+            : "--";
+
+    const reasons =
+        data.reasons || [];
+
+    const reasonsElement =
+        document.getElementById(
+            "reasons"
+        );
+
+    reasonsElement.innerHTML = "";
+
+    if (!reasons.length) {
+
+        reasonsElement.innerHTML =
+            "<li>No strong confirmation.</li>";
+
+    } else {
+
+        reasons.forEach(reason => {
+
+            const li =
+                document.createElement("li");
+
+            li.textContent =
+                reason;
+
+            reasonsElement.appendChild(li);
+
+        });
+
+    }
+
+}
+
+
+function timeframeLabel(seconds) {
+
+    const map = {
+        60: "1 Minute",
+        300: "5 Minutes",
+        900: "15 Minutes",
+        1800: "30 Minutes",
+        3600: "1 Hour",
+        7200: "2 Hours",
+        14400: "4 Hours",
+        86400: "1 Day"
+    };
+
+    return map[seconds] ||
+        `${seconds} Seconds`;
+
+}
+
+
+function formatPrice(value) {
+
+    if (
+        value === null ||
+        value === undefined ||
+        Number.isNaN(Number(value))
+    ) {
+        return "--";
+    }
+
+    return Number(value)
+        .toLocaleString(
+            undefined,
+            {
+                maximumFractionDigits: 8
+            }
+        );
+
+}
+
+
+function formatNumber(value) {
+
+    if (
+        value === null ||
+        value === undefined ||
+        Number.isNaN(Number(value))
+    ) {
+        return "--";
+    }
+
+    return Number(value)
+        .toFixed(5);
+
+}
+
+
+function escapeHtml(text) {
+
+    return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+}
+
+
+async function checkHealth() {
+
+    try {
+
+        const response =
+            await fetch(
+                `${API_BASE}/api/assets`
+            );
+
+        if (response.ok) {
+
+            document.getElementById(
+                "connectionStatus"
+            ).textContent =
+                "● API Online";
+
+            document.getElementById(
+                "connectionStatus"
+            ).className =
+                "status";
+
+        }
+
+    } catch (error) {
+
+        document.getElementById(
+            "connectionStatus"
+        ).textContent =
+            "● API Offline";
+
+        document.getElementById(
+            "connectionStatus"
+        ).className =
+            "status error";
+
+    }
+
+}
+
+
+resizeCanvas();
+checkHealth();
+loadMarket();
+
+</script>
+
+</body>
+  </html>
+  
