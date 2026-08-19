@@ -114,3 +114,117 @@ class TwelveDataProvider:
             "symbols_cached": len(self.latest_prices),
         }
       
+    async def get_candles(
+        self,
+        symbol: str,
+        timeframe_seconds: int,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch real OHLC candles from Twelve Data.
+        """
+
+        if not self.api_key:
+            raise RuntimeError(
+                "TWELVE_DATA_API_KEY is not configured."
+            )
+
+        symbol = symbol.strip()
+
+        if not symbol:
+            raise ValueError("Symbol must not be empty.")
+
+        interval_map = {
+            60: "1min",
+            300: "5min",
+            900: "15min",
+            1800: "30min",
+            3600: "1h",
+            7200: "2h",
+            14400: "4h",
+            28800: "8h",
+            86400: "1day",
+            604800: "1week",
+            2592000: "1month",
+        }
+
+        interval = interval_map.get(timeframe_seconds)
+
+        if interval is None:
+            raise ValueError(
+                f"Unsupported Twelve Data timeframe: "
+                f"{timeframe_seconds} seconds."
+            )
+
+        limit = max(35, min(int(limit), 5000))
+
+        import urllib.parse
+        import urllib.request
+
+        params = urllib.parse.urlencode(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "outputsize": limit,
+                "order": "asc",
+                "apikey": self.api_key,
+            }
+        )
+
+        url = (
+            "https://api.twelvedata.com/time_series?"
+            + params
+        )
+
+        def fetch() -> dict[str, Any]:
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Chinese-boot/1.0",
+                    "Accept": "application/json",
+                },
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=20,
+            ) as response:
+                return json.loads(
+                    response.read().decode("utf-8")
+                )
+
+        data = await asyncio.to_thread(fetch)
+
+        if data.get("status") == "error":
+            raise RuntimeError(
+                data.get(
+                    "message",
+                    "Twelve Data request failed.",
+                )
+            )
+
+        values = data.get("values", [])
+
+        if not isinstance(values, list):
+            return []
+
+        candles = []
+
+        for item in values:
+            try:
+                candles.append(
+                    {
+                        "open": float(item["open"]),
+                        "high": float(item["high"]),
+                        "low": float(item["low"]),
+                        "close": float(item["close"]),
+                    }
+                )
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
+                continue
+
+        return candles
