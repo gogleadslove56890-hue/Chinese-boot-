@@ -75,6 +75,7 @@ class TwelveDataProvider:
                 }
 
         return data
+    
 
     async def stream(
         self,
@@ -228,3 +229,15 @@ class TwelveDataProvider:
                 continue
 
         return candles
+            async def get_quote(self, symbol: str) -> dict[str, Any]:
+        price = self.get_latest_price(symbol)
+
+        if price is not None:
+            return price
+
+        return {
+            "symbol": symbol,
+            "price": None,
+            "timestamp": None,
+        }
+        
