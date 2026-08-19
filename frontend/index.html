@@ -286,22 +286,21 @@
 
     <section class="controls">
 
-        <input
+        <select
             id="symbolInput"
-            type="text"
-            value="EUR/USD"
-            placeholder="Enter symbol e.g. EUR/USD"
         >
+            <option value="EUR/USD">EUR/USD</option>
+        </select>
 
         <select id="timeframe">
+            <option value="5">5 Seconds</option>
+            <option value="10">10 Seconds</option>
+            <option value="15">15 Seconds</option>
+            <option value="30">30 Seconds</option>
             <option value="60">1 Minute</option>
+            <option value="120">2 Minutes</option>
+            <option value="180">3 Minutes</option>
             <option value="300">5 Minutes</option>
-            <option value="900">15 Minutes</option>
-            <option value="1800">30 Minutes</option>
-            <option value="3600">1 Hour</option>
-            <option value="7200">2 Hours</option>
-            <option value="14400">4 Hours</option>
-            <option value="86400">1 Day</option>
         </select>
 
         <select id="limit">
@@ -427,7 +426,7 @@
 
 <script>
 
-const API_BASE = "";
+const API_BASE = window.API_BASE || "";
 
 const canvas = document.getElementById("chart");
 const ctx = canvas.getContext("2d");
@@ -625,9 +624,8 @@ async function loadMarket() {
             );
 
         if (!candleResponse.ok) {
-            throw new Error(
-                "Candle request failed"
-            );
+            const error = await candleResponse.json().catch(() => ({}));
+            throw new Error(error.detail || "Candle request failed");
         }
 
         const candleData =
@@ -699,6 +697,7 @@ async function loadMarket() {
 async function runAnalysis(symbol, timeframe) {
 
     if (!candles.length) {
+        updateAnalysis({ signal: "WAIT", confidence: 0, explanation: "No verified candles are available." });
         return;
     }
 
@@ -728,9 +727,8 @@ async function runAnalysis(symbol, timeframe) {
         );
 
     if (!response.ok) {
-        throw new Error(
-            "Analysis request failed"
-        );
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || "Analysis request failed");
     }
 
     const data =
@@ -804,7 +802,7 @@ function updateAnalysis(data) {
     document.getElementById(
         "rsi"
     ).textContent =
-        formatNumber(indicators.rsi4);
+        formatNumber(indicators.rsi14);
 
     const macd =
         indicators.macd;
@@ -854,14 +852,14 @@ function updateAnalysis(data) {
 function timeframeLabel(seconds) {
 
     const map = {
+        5: "5 Seconds",
+        10: "10 Seconds",
+        15: "15 Seconds",
+        30: "30 Seconds",
         60: "1 Minute",
+        120: "2 Minutes",
+        180: "3 Minutes",
         300: "5 Minutes",
-        900: "15 Minutes",
-        1800: "30 Minutes",
-        3600: "1 Hour",
-        7200: "2 Hours",
-        14400: "4 Hours",
-        86400: "1 Day"
     };
 
     return map[seconds] ||
@@ -925,7 +923,7 @@ async function checkHealth() {
 
         const response =
             await fetch(
-                `${API_BASE}/api/assets`
+                `${API_BASE}/api/health`
             );
 
         if (response.ok) {
@@ -958,10 +956,36 @@ async function checkHealth() {
 
 }
 
+async function loadAssets() {
+    const response = await fetch(`${API_BASE}/api/assets`);
+    if (!response.ok) {
+        throw new Error("Asset list is unavailable");
+    }
+    const data = await response.json();
+    const symbolSelect = document.getElementById("symbolInput");
+    symbolSelect.innerHTML = "";
+    (data.assets || []).forEach(asset => {
+        const option = document.createElement("option");
+        option.value = asset.symbol;
+        option.textContent = `${asset.symbol} - ${asset.name}`;
+        symbolSelect.appendChild(option);
+    });
+    symbolSelect.value = "EUR/USD";
+}
+
 
 resizeCanvas();
-checkHealth();
-loadMarket();
+(async () => {
+    try {
+        await loadAssets();
+        await checkHealth();
+        await loadMarket();
+    } catch (error) {
+        document.getElementById("connectionStatus").textContent = "● API Offline";
+        document.getElementById("connectionStatus").className = "status error";
+        document.getElementById("reasons").innerHTML = `<li class="error">${escapeHtml(error.message)}</li>`;
+    }
+})();
 
 </script>
 

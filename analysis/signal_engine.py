@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -42,6 +43,16 @@ def _extract_candles(payload: dict) -> list[dict]:
         )
 
         if None in (open_price, high_price, low_price, close_price):
+            continue
+
+        values = (open_price, high_price, low_price, close_price)
+        if not all(math.isfinite(value) for value in values):
+            continue
+
+        if low_price > high_price or not all(
+            low_price <= value <= high_price
+            for value in (open_price, close_price)
+        ):
             continue
 
         if high_price < low_price:
@@ -232,11 +243,10 @@ def analyze(payload: dict) -> dict:
 
     if len(candles) < 35:
         return {
-            "ok": False,
-            "error": (
-                "At least 35 valid OHLC candles are required "
-                "for analysis."
-            ),
+            "ok": True,
+            "signal": "WAIT",
+            "confidence": 0,
+            "explanation": "Insufficient verified market data for analysis.",
             "required_candles": 35,
             "received_candles": len(candles),
         }

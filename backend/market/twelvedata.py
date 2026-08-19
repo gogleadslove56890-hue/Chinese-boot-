@@ -1,243 +1,155 @@
+from __future__ import annotations
+
 import asyncio
 import json
+import math
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
-
-import websockets
 
 
 class TwelveDataProvider:
-    """
-    Real-time market-data adapter using Twelve Data WebSocket.
+    """Async REST adapter for verified Twelve Data market data."""
 
-    API key must be supplied through the TWELVE_DATA_API_KEY
-    environment variable. Never put the real API key in GitHub.
-    """
+    DEFAULT_BASE_URL = "https://api.twelvedata.com"
+    SUPPORTED_INTERVALS = {60: "1min", 300: "5min"}
 
-    WS_URL = "wss://ws.twelvedata.com/v1/quotes/price"
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 15.0,
+    ) -> None:
+        self.api_key = (
+            api_key if api_key is not None else os.getenv("TWELVE_DATA_API_KEY")
+        )
+        self.base_url = (
+            base_url or os.getenv("TWELVE_DATA_BASE_URL") or self.DEFAULT_BASE_URL
+        ).rstrip("/")
+        self.timeout = timeout
 
-    def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or os.getenv("TWELVE_DATA_API_KEY")
-        self.websocket = None
-        self.connected = False
-        self.latest_prices: dict[str, dict[str, Any]] = {}
-
-    async def connect(self) -> None:
+    def _require_key(self) -> str:
         if not self.api_key:
-            raise RuntimeError(
-                "TWELVE_DATA_API_KEY is not configured."
-            )
+            raise RuntimeError("TWELVE_DATA_API_KEY is not configured.")
+        return self.api_key
 
-        url = f"{self.WS_URL}?apikey={self.api_key}"
-
-        self.websocket = await websockets.connect(
-            url,
-            ping_interval=20,
-            ping_timeout=20,
-        )
-
-        self.connected = True
-
-    async def subscribe(self, symbols: list[str]) -> None:
-        if not self.websocket:
-            raise RuntimeError("WebSocket is not connected.")
-
-        payload = {
-            "action": "subscribe",
-            "params": {
-                "symbols": ",".join(symbols)
-            },
-        }
-
-        await self.websocket.send(json.dumps(payload))
-
-    async def receive(self) -> dict[str, Any]:
-        if not self.websocket:
-            raise RuntimeError("WebSocket is not connected.")
-
-        message = await self.websocket.recv()
-
-        if isinstance(message, bytes):
-            message = message.decode("utf-8")
-
-        data = json.loads(message)
-
-        if data.get("event") == "price":
-            symbol = data.get("symbol")
-            price = data.get("price")
-            timestamp = data.get("timestamp")
-
-            if symbol and price is not None:
-                self.latest_prices[symbol] = {
-                    "symbol": symbol,
-                    "price": float(price),
-                    "timestamp": timestamp,
-                }
-
-        return data
-    
-
-    async def stream(
-        self,
-        symbols: list[str],
-    ):
-        await self.connect()
-        await self.subscribe(symbols)
-
-        while self.connected:
-            try:
-                yield await self.receive()
-            except websockets.ConnectionClosed:
-                self.connected = False
-                break
-            except asyncio.CancelledError:
-                self.connected = False
-                raise
-
-    async def close(self) -> None:
-        self.connected = False
-
-        if self.websocket:
-            await self.websocket.close()
-            self.websocket = None
-
-    def get_latest_price(
-        self,
-        symbol: str,
-    ) -> dict[str, Any] | None:
-        return self.latest_prices.get(symbol)
-
-    async def health_check(self) -> dict[str, Any]:
-        return {
-            "provider": "Twelve Data",
-            "connected": self.connected,
-            "live_data": bool(self.connected),
-            "symbols_cached": len(self.latest_prices),
-        }
-      
-    async def get_candles(
-        self,
-        symbol: str,
-        timeframe_seconds: int,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """
-        Fetch real OHLC candles from Twelve Data.
-        """
-
-        if not self.api_key:
-            raise RuntimeError(
-                "TWELVE_DATA_API_KEY is not configured."
-            )
-
-        symbol = symbol.strip()
-
-        if not symbol:
-            raise ValueError("Symbol must not be empty.")
-
-        interval_map = {
-            60: "1min",
-            300: "5min",
-            900: "15min",
-            1800: "30min",
-            3600: "1h",
-            7200: "2h",
-            14400: "4h",
-            28800: "8h",
-            86400: "1day",
-            604800: "1week",
-            2592000: "1month",
-        }
-
-        interval = interval_map.get(timeframe_seconds)
-
-        if interval is None:
-            raise ValueError(
-                f"Unsupported Twelve Data timeframe: "
-                f"{timeframe_seconds} seconds."
-            )
-
-        limit = max(35, min(int(limit), 5000))
-
-        import urllib.parse
-        import urllib.request
-
-        params = urllib.parse.urlencode(
-            {
-                "symbol": symbol,
-                "interval": interval,
-                "outputsize": limit,
-                "order": "asc",
-                "apikey": self.api_key,
-            }
-        )
-
-        url = (
-            "https://api.twelvedata.com/time_series?"
-            + params
-        )
+    async def _request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+        query = urllib.parse.urlencode({**params, "apikey": self._require_key()})
+        url = f"{self.base_url}/{endpoint}?{query}"
 
         def fetch() -> dict[str, Any]:
             request = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Chinese-boot/1.0",
                     "Accept": "application/json",
+                    "User-Agent": "Chinese-boot/1.0",
                 },
             )
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    raw = response.read().decode("utf-8")
+            except urllib.error.HTTPError as exc:
+                try:
+                    details = json.loads(exc.read().decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    details = {}
+                message = details.get("message") if isinstance(details, dict) else None
+                suffix = f": {message}" if message else "."
+                raise RuntimeError(f"Twelve Data HTTP error {exc.code}{suffix}") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError("Unable to reach Twelve Data.") from exc
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Twelve Data returned invalid JSON.") from exc
+            if not isinstance(payload, dict):
+                raise RuntimeError("Twelve Data returned an invalid response.")
+            return payload
 
-            with urllib.request.urlopen(
-                request,
-                timeout=20,
-            ) as response:
-                return json.loads(
-                    response.read().decode("utf-8")
-                )
+        payload = await asyncio.to_thread(fetch)
+        if payload.get("status") == "error" or payload.get("code") in {401, 403, 429}:
+            raise RuntimeError(str(payload.get("message") or "Twelve Data request failed."))
+        return payload
 
-        data = await asyncio.to_thread(fetch)
+    @staticmethod
+    def _symbol(symbol: str) -> str:
+        value = symbol.strip().upper()
+        if not value or "/" not in value:
+            raise ValueError("Symbol must be a currency pair such as EUR/USD.")
+        return value
 
-        if data.get("status") == "error":
-            raise RuntimeError(
-                data.get(
-                    "message",
-                    "Twelve Data request failed.",
-                )
-            )
-
-        values = data.get("values", [])
-
+    @staticmethod
+    def _parse_candles(values: Any) -> list[dict[str, float]]:
         if not isinstance(values, list):
             return []
-
-        candles = []
-
+        candles: list[dict[str, float]] = []
         for item in values:
+            if not isinstance(item, dict):
+                continue
             try:
-                candles.append(
-                    {
-                        "open": float(item["open"]),
-                        "high": float(item["high"]),
-                        "low": float(item["low"]),
-                        "close": float(item["close"]),
-                    }
-                )
-            except (
-                KeyError,
-                TypeError,
-                ValueError,
+                candle = {
+                    key: float(item[key])
+                    for key in ("open", "high", "low", "close")
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not all(math.isfinite(value) for value in candle.values()):
+                continue
+            if candle["low"] > candle["high"] or not all(
+                candle["low"] <= candle[key] <= candle["high"]
+                for key in ("open", "close")
             ):
                 continue
-
+            candles.append(candle)
         return candles
-            async def get_quote(self, symbol: str) -> dict[str, Any]:
-        price = self.get_latest_price(symbol)
 
-        if price is not None:
-            return price
+    async def get_candles(
+        self, symbol: str, timeframe_seconds: int, limit: int = 100
+    ) -> list[dict[str, float]]:
+        interval = self.SUPPORTED_INTERVALS.get(timeframe_seconds)
+        if interval is None:
+            raise ValueError(
+                f"Unsupported timeframe: {timeframe_seconds} seconds. "
+                "Twelve Data supports 1 minute and 5 minute candles here."
+            )
+        try:
+            outputsize = max(1, min(int(limit), 5000))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit must be a positive integer.") from exc
+        payload = await self._request(
+            "time_series",
+            {
+                "symbol": self._symbol(symbol),
+                "interval": interval,
+                "outputsize": outputsize,
+                "order": "asc",
+            },
+        )
+        candles = self._parse_candles(payload.get("values"))
+        if not candles:
+            raise RuntimeError("Twelve Data returned no valid candle values.")
+        return candles
 
+    async def get_quote(self, symbol: str) -> dict[str, Any]:
+        normalized = self._symbol(symbol)
+        payload = await self._request("quote", {"symbol": normalized})
+        try:
+            price = float(payload["close"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Twelve Data returned no valid quote price.") from exc
+        if not math.isfinite(price):
+            raise RuntimeError("Twelve Data returned an invalid quote price.")
         return {
-            "symbol": symbol,
-            "price": None,
-            "timestamp": None,
+            "symbol": normalized,
+            "price": price,
+            "timestamp": payload.get("timestamp"),
         }
-        
+
+    async def health_check(self) -> dict[str, Any]:
+        return {
+            "provider": "Twelve Data",
+            "configured": bool(self.api_key),
+            "supported_timeframes": sorted(self.SUPPORTED_INTERVALS),
+        }
