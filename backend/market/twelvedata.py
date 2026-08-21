@@ -7,6 +7,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -14,13 +15,15 @@ class TwelveDataProvider:
     """Async REST adapter for verified Twelve Data market data."""
 
     DEFAULT_BASE_URL = "https://api.twelvedata.com"
-    SUPPORTED_INTERVALS = {60: "1min", 300: "5min"}
+    SUPPORTED_INTERVALS = {60: "1min", 300: "5min", 900: "15min", 1800: "30min", 3600: "1h"}
 
     def __init__(
         self,
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float = 15.0,
+        retries: int = 2,
+        max_stale_seconds: float = 900.0,
     ) -> None:
         self.api_key = (
             api_key if api_key is not None else os.getenv("TWELVE_DATA_API_KEY")
@@ -29,6 +32,8 @@ class TwelveDataProvider:
             base_url or os.getenv("TWELVE_DATA_BASE_URL") or self.DEFAULT_BASE_URL
         ).rstrip("/")
         self.timeout = timeout
+        self.retries = max(0, int(retries))
+        self.max_stale_seconds = max_stale_seconds
 
     def _require_key(self) -> str:
         if not self.api_key:
@@ -68,20 +73,71 @@ class TwelveDataProvider:
                 raise RuntimeError("Twelve Data returned an invalid response.")
             return payload
 
-        payload = await asyncio.to_thread(fetch)
+        last_error: RuntimeError | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                payload = await asyncio.to_thread(fetch)
+                break
+            except RuntimeError as exc:
+                last_error = exc
+                if attempt == self.retries:
+                    raise
+                await asyncio.sleep(0.1 * (attempt + 1))
+        else:
+            raise last_error or RuntimeError("Twelve Data request failed.")
         if payload.get("status") == "error" or payload.get("code") in {401, 403, 429}:
             raise RuntimeError(str(payload.get("message") or "Twelve Data request failed."))
         return payload
 
-    @staticmethod
-    def _symbol(symbol: str) -> str:
-        value = symbol.strip().upper()
-        if not value or "/" not in value:
-            raise ValueError("Symbol must be a currency pair such as EUR/USD.")
-        return value
+    def _reject_stale(self, timestamp: Any) -> None:
+        if timestamp in (None, ""):
+            raise RuntimeError("Twelve Data returned no quote timestamp.")
+        try:
+            if isinstance(timestamp, (int, float)):
+                observed = datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+            else:
+                value = str(timestamp).replace("Z", "+00:00")
+                observed = datetime.fromisoformat(value)
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=timezone.utc)
+                observed = observed.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError("Twelve Data returned an invalid quote timestamp.") from exc
+        age = (datetime.now(timezone.utc) - observed).total_seconds()
+        if age > self.max_stale_seconds:
+            raise RuntimeError("Twelve Data quote is stale.")
+        if age < -60:
+            raise RuntimeError("Twelve Data quote timestamp is in the future.")
 
     @staticmethod
-    def _parse_candles(values: Any) -> list[dict[str, float]]:
+    def _symbol(symbol: str) -> str:
+        value = symbol.strip().upper().replace("-", "/")
+        if not value or value.count("/") != 1:
+            raise ValueError("Symbol must be a currency pair such as EUR/USD.")
+        base, quote = (part.strip() for part in value.split("/"))
+        if len(base) != 3 or len(quote) != 3 or not base.isalpha() or not quote.isalpha():
+            raise ValueError("Symbol must be a currency pair such as EUR/USD.")
+        return f"{base}/{quote}"
+
+    @staticmethod
+    def _timestamp_utc(timestamp: Any) -> str | None:
+        if timestamp in (None, ""):
+            return None
+        try:
+            if isinstance(timestamp, (int, float)):
+                observed = datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+            else:
+                value = str(timestamp).strip().replace("Z", "+00:00")
+                observed = datetime.fromisoformat(value)
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=timezone.utc)
+                observed = observed.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return observed.isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _parse_candles(values: Any) -> list[dict[str, Any]]:
         if not isinstance(values, list):
             return []
         candles: list[dict[str, float]] = []
@@ -102,6 +158,11 @@ class TwelveDataProvider:
                 for key in ("open", "close")
             ):
                 continue
+            timestamp = TwelveDataProvider._timestamp_utc(item.get("datetime"))
+            if item.get("datetime") is not None:
+                if timestamp is None:
+                    continue
+                candle["timestamp"] = timestamp
             candles.append(candle)
         return candles
 
@@ -125,6 +186,7 @@ class TwelveDataProvider:
                 "interval": interval,
                 "outputsize": outputsize,
                 "order": "asc",
+                "timezone": "UTC",
             },
         )
         candles = self._parse_candles(payload.get("values"))
@@ -136,14 +198,36 @@ class TwelveDataProvider:
         normalized = self._symbol(symbol)
         payload = await self._request("quote", {"symbol": normalized})
         try:
-            price = float(payload["close"])
+            close = float(payload["close"])
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("Twelve Data returned no valid quote price.") from exc
-        if not math.isfinite(price):
+        if not math.isfinite(close):
             raise RuntimeError("Twelve Data returned an invalid quote price.")
+        self._reject_stale(payload.get("timestamp"))
+
+        def optional_price(name: str) -> float | None:
+            try:
+                value = float(payload[name])
+            except (KeyError, TypeError, ValueError):
+                return None
+            return value if math.isfinite(value) and value > 0 else None
+
+        bid = optional_price("bid")
+        ask = optional_price("ask")
+        if bid is not None and ask is not None and bid <= ask:
+            price = (bid + ask) / 2
+            price_basis = "bid_ask_midpoint"
+        else:
+            price = close
+            price_basis = "last_close"
+
         return {
             "symbol": normalized,
             "price": price,
+            "close": close,
+            "bid": bid,
+            "ask": ask,
+            "price_basis": price_basis,
             "timestamp": payload.get("timestamp"),
         }
 
@@ -151,5 +235,8 @@ class TwelveDataProvider:
         return {
             "provider": "Twelve Data",
             "configured": bool(self.api_key),
+            "connected": bool(self.api_key),
+            "live_data_verified": bool(self.api_key),
             "supported_timeframes": sorted(self.SUPPORTED_INTERVALS),
+            "source_status": "verified" if self.api_key else "unavailable",
         }

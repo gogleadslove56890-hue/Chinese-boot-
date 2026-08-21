@@ -37,12 +37,9 @@ ASSETS = [
 ]
 
 TIMEFRAMES = [
-    {"label": "5 seconds", "seconds": 5},
-    {"label": "10 seconds", "seconds": 10},
-    {"label": "15 seconds", "seconds": 15},
-    {"label": "30 seconds", "seconds": 30},
     {"label": "1 minute", "seconds": 60},
-    {"label": "2 minutes", "seconds": 120},
-    {"label": "3 minutes", "seconds": 180},
     {"label": "5 minutes", "seconds": 300},
+    {"label": "15 minutes", "seconds": 900},
+    {"label": "30 minutes", "seconds": 1800},
+    {"label": "1 hour", "seconds": 3600},
 ]

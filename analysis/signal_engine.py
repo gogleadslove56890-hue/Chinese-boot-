@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -198,6 +199,19 @@ def _support_resistance(
     }
 
 
+def _atr(candles: list[dict], period: int = 14) -> float | None:
+    if len(candles) < period + 1:
+        return None
+    true_ranges = []
+    for previous, current in zip(candles[-period - 1:-1], candles[-period:]):
+        true_ranges.append(max(
+            current["high"] - current["low"],
+            abs(current["high"] - previous["close"]),
+            abs(current["low"] - previous["close"]),
+        ))
+    return sum(true_ranges) / period
+
+
 def _candle_strength(candle: dict) -> dict[str, Any]:
     open_price = candle["open"]
     high = candle["high"]
@@ -232,6 +246,32 @@ def _candle_strength(candle: dict) -> dict[str, Any]:
     }
 
 
+def _trend(closes: list[float], ema9: float | None, ema21: float | None) -> str:
+    if ema9 is None or ema21 is None:
+        return "UNKNOWN"
+    if ema9 > ema21 and closes[-1] > ema21:
+        return "BULLISH"
+    if ema9 < ema21 and closes[-1] < ema21:
+        return "BEARISH"
+    return "MIXED"
+
+
+def _timestamp_status(timestamp: Any, timeframe: int | None) -> dict[str, Any]:
+    if timestamp in (None, ""):
+        return {"timestamp": None, "fresh": False, "status": "missing"}
+    try:
+        value = str(timestamp).replace("Z", "+00:00")
+        observed = datetime.fromisoformat(value)
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return {"timestamp": str(timestamp), "fresh": False, "status": "invalid"}
+    max_age = max(120, (timeframe or 60) * 3)
+    fresh = -60 <= age <= max_age
+    return {"timestamp": str(timestamp), "fresh": fresh, "age_seconds": round(age, 1), "status": "fresh" if fresh else "stale"}
+
+
 def analyze(payload: dict) -> dict:
     if not isinstance(payload, dict):
         return {
@@ -241,6 +281,7 @@ def analyze(payload: dict) -> dict:
 
     candles = _extract_candles(payload)
 
+    timeframe = payload.get("timeframe")
     if len(candles) < 35:
         return {
             "ok": True,
@@ -249,6 +290,8 @@ def analyze(payload: dict) -> dict:
             "explanation": "Insufficient verified market data for analysis.",
             "required_candles": 35,
             "received_candles": len(candles),
+            "next_candle_outlook": {"direction": "WAIT", "confidence": 0, "signal_strength": "WEAK", "reasons": ["Insufficient verified market data."]},
+            "trade_decision": "NO TRADE",
         }
 
     closes = _closes(candles)
@@ -262,9 +305,19 @@ def analyze(payload: dict) -> dict:
     macd = _macd(closes)
     levels = _support_resistance(candles)
     candle = _candle_strength(last)
+    trend = _trend(closes, ema9, ema21)
+    higher_candles = _extract_candles({"candles": payload.get("higher_timeframe", [])})
+    higher_closes = _closes(higher_candles)
+    higher_ema9 = _ema(higher_closes, 9)
+    higher_ema21 = _ema(higher_closes, 21)
+    higher_trend = _trend(higher_closes, higher_ema9, higher_ema21) if higher_closes else "UNKNOWN"
+    data_status = _timestamp_status(last.get("timestamp"), int(timeframe) if timeframe else None)
 
     score = 0
     reasons = []
+
+    # Transparent model weights: trend/EMA 4, momentum/RSI 3, MACD 2,
+    # candle structure 1, volatility 1, and higher-timeframe confirmation 3.
 
     # EMA trend
     if ema9 is not None and ema21 is not None:
@@ -329,17 +382,38 @@ def analyze(payload: dict) -> dict:
             score -= 1
             reasons.append("Last candle has strong bearish body.")
 
+    atr = _atr(candles)
+    average_range = sum(item["high"] - item["low"] for item in candles[-20:]) / 20
+    if atr is not None and average_range > 0 and atr <= average_range * 2:
+        reasons.append("ATR volatility is within the acceptable range.")
+    elif atr is not None:
+        reasons.append("ATR volatility is elevated.")
+
+    if higher_trend == "BULLISH":
+        score += 3
+        reasons.append("Higher timeframe trend is bullish.")
+    elif higher_trend == "BEARISH":
+        score -= 3
+        reasons.append("Higher timeframe trend is bearish.")
+
     # Final signal
     if score >= 3:
         signal = "UP"
     elif score <= -3:
         signal = "DOWN"
     else:
-        signal = "NEUTRAL"
+        signal = "WAIT"
 
     # Confidence is deliberately capped.
     # It is a model score, NOT a probability of profit.
     confidence = min(95, 50 + abs(score) * 7)
+    if signal == "WAIT":
+        confidence = 0
+    if signal == "UP" and higher_trend == "BEARISH" or signal == "DOWN" and higher_trend == "BULLISH":
+        signal = "WAIT"
+        confidence = 0
+        reasons.append("Lower and higher timeframe trends conflict.")
+    signal_strength = "STRONG" if confidence >= 78 else "MODERATE" if confidence >= 64 else "WEAK"
 
     if signal == "UP":
         explanation = (
@@ -352,10 +426,13 @@ def analyze(payload: dict) -> dict:
             "conditions based on the supplied candles."
         )
     else:
-        explanation = (
-            "Bullish and bearish conditions are mixed. "
-            "There is no strong directional confirmation."
-        )
+        explanation = "Trend and momentum disagree or lack sufficient confirmation."
+
+    reasons_against = {
+        "UP": ["Bearish confirmations did not outweigh the bullish technical evidence."],
+        "DOWN": ["Bullish confirmations did not outweigh the bearish technical evidence."],
+        "WAIT": ["Technical confirmations are mixed or below the signal threshold."],
+    }[signal]
 
     symbol = payload.get("symbol")
     timeframe = payload.get("timeframe")
@@ -374,10 +451,24 @@ def analyze(payload: dict) -> dict:
             "ema50": ema50,
             "rsi14": rsi,
             "macd": macd,
+            "atr14": atr,
         },
         "levels": levels,
         "last_candle": candle,
+        "current_candle": last,
+        "previous_candles": candles[-5:-1],
+        "trend": trend,
+        "higher_timeframe_trend": higher_trend,
+        "higher_timeframe_seconds": payload.get("higher_timeframe_seconds"),
+        "momentum": {"rsi14": rsi, "macd": macd, "direction": "BULLISH" if score > 0 else "BEARISH" if score < 0 else "MIXED"},
+        "recent_high": max(item["high"] for item in candles[-20:]),
+        "recent_low": min(item["low"] for item in candles[-20:]),
+        "volatility": {"average_range": average_range, "atr14": atr, "lookback": 20},
+        "data_status": data_status,
+        "next_candle_outlook": {"direction": signal, "confidence": confidence, "signal_strength": signal_strength, "reasons": reasons},
+        "trade_decision": f"TRADE: {signal}" if signal in {"UP", "DOWN"} and confidence >= 64 else "NO TRADE",
         "reasons": reasons,
+        "reasons_against": reasons_against,
         "explanation": explanation,
         "data_source": payload.get(
             "data_source",
