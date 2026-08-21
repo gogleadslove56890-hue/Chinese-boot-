@@ -13,11 +13,11 @@ android { namespace = "com.chineseboot.scanner"; compileSdk = 35
         versionName = "1.3.2"
         val backendUrl = providers.gradleProperty("scannerBackendUrl").orElse(
             providers.environmentVariable("SCANNER_BACKEND_URL")
-        ).orElse("https://chinese-boot-1uvicorn-backend-app.onrender.com").get()
+        ).orElse("https://chinese-scanner-backend.onrender.com").get()
         require(backendUrl.startsWith("https://") && !backendUrl.contains(".github.dev", ignoreCase = true)) {
             "scannerBackendUrl must be a stable HTTPS production URL, never a GitHub Codespaces URL."
         }
-        buildConfigField("String", "DEFAULT_BACKEND_URL", "\"https://chinese-boot-1uvicorn-backend-app.onrender.com\"")
+        buildConfigField("String", "DEFAULT_BACKEND_URL", "\"https://chinese-scanner-backend.onrender.com\"")
     }
     buildTypes {
         getByName("release") {
