@@ -234,6 +234,49 @@
             color: #ff6573;
         }
 
+        .scanner-fab {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 5;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            padding: 0;
+            background: #35e58b;
+            color: #071014;
+            border: 2px solid #b9ffd5;
+            box-shadow: 0 8px 24px rgba(0,0,0,.35);
+            font-size: 22px;
+        }
+
+        .scanner-panel {
+            position: fixed;
+            right: 18px;
+            bottom: 86px;
+            z-index: 4;
+            width: min(360px, calc(100vw - 24px));
+            max-height: calc(100vh - 110px);
+            overflow: auto;
+            background: #0b171c;
+            border: 1px solid #35e58b;
+            border-radius: 14px;
+            padding: 15px;
+            box-shadow: 0 14px 40px rgba(0,0,0,.45);
+        }
+
+        .scanner-panel[hidden] { display: none; }
+        .scanner-panel h2 { font-size: 16px; margin-bottom: 10px; }
+        .scanner-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .scanner-grid label { color: #82959e; font-size: 11px; }
+        .scanner-grid select { width: 100%; padding: 9px; margin-top: 4px; }
+        .scanner-signal { text-align: center; font-size: 34px; font-weight: 900; margin: 12px 0 4px; }
+        .scanner-meta { color: #a9bbc2; font-size: 12px; line-height: 1.7; }
+        .scanner-actions { display: flex; gap: 7px; margin-top: 12px; }
+        .scanner-actions button { flex: 1; padding: 10px 6px; font-size: 12px; }
+        .stop-button { background: #7b2635; border-color: #ff6573; }
+        .scanner-warning { color: #f0c75e; font-size: 11px; margin-top: 10px; }
+
         @media (max-width: 850px) {
             .controls {
                 grid-template-columns: 1fr 1fr;
@@ -293,14 +336,11 @@
         </select>
 
         <select id="timeframe">
-            <option value="5">5 Seconds</option>
-            <option value="10">10 Seconds</option>
-            <option value="15">15 Seconds</option>
-            <option value="30">30 Seconds</option>
             <option value="60">1 Minute</option>
-            <option value="120">2 Minutes</option>
-            <option value="180">3 Minutes</option>
             <option value="300">5 Minutes</option>
+            <option value="900">15 Minutes</option>
+            <option value="1800">30 Minutes</option>
+            <option value="3600">1 Hour</option>
         </select>
 
         <select id="limit">
@@ -330,6 +370,10 @@
 
                         <div class="price" id="price">
                             --
+                        </div>
+
+                        <div class="symbol-label" id="ourPriceTimestamp">
+                            Last update: --
                         </div>
                     </div>
 
@@ -412,6 +456,13 @@
                     </ul>
                 </div>
 
+                <div class="reasons">
+                    <h3>Data Source</h3>
+                    <p id="providerLabel">Provider: --</p>
+                    <p id="sourceStatus">Source status: --</p>
+                    <p id="olympReference">Olymp Trade live quote unavailable</p>
+                </div>
+
             </div>
 
         </aside>
@@ -423,6 +474,25 @@
     </div>
 
 </div>
+
+<button class="scanner-fab" id="scannerFab" title="Open scanner" aria-label="Open scanner">⌁</button>
+<section class="scanner-panel" id="scannerPanel" hidden aria-label="Chart scanner">
+    <h2>Chart Scanner</h2>
+    <div class="scanner-grid">
+        <label>Asset<select id="scannerSymbol"></select></label>
+        <label>Timeframe<select id="scannerTimeframe"></select></label>
+    </div>
+    <div class="scanner-meta" id="scannerStatus">Status: stopped</div>
+    <div class="scanner-meta" id="scannerSource">Provider: Olymp Trade | Verification: unavailable</div>
+    <div class="scanner-signal neutral" id="scannerSignal">WAIT</div>
+    <div class="scanner-meta" id="scannerDetails">No verified Olymp Trade data available.</div>
+    <div class="scanner-actions">
+        <button class="primary" id="startScan">Start Scan</button>
+        <button id="stopScan">Stop Scan</button>
+        <button class="stop-button" id="emergencyStop">Emergency Stop</button>
+    </div>
+    <p class="scanner-warning">MANUAL mode only. AUTO requires an official authorized Olymp Trade trading integration.</p>
+</section>
 
 <script>
 
@@ -634,6 +704,19 @@ async function loadMarket() {
         candles =
             candleData.candles || [];
 
+        document.getElementById("providerLabel").textContent =
+            `Provider: ${candleData.provider || "--"}`;
+        document.getElementById("sourceStatus").textContent =
+            `Source/verification: ${candleData.source_status || "--"}`;
+
+        if (!candleData.analysis_available || !candles.length) {
+            throw new Error(
+                candleData.provider === "Olymp Trade"
+                    ? "Olymp Trade live quote unavailable"
+                    : "Verified market candles unavailable"
+            );
+        }
+
         document.getElementById(
             "symbolLabel"
         ).textContent = symbol;
@@ -645,24 +728,17 @@ async function loadMarket() {
 
         drawChart();
 
-        const quoteResponse =
-            await fetch(
-                `${API_BASE}/api/quote?symbol=${encodeURIComponent(symbol)}`
-            );
+        const latestCandle = candles[candles.length - 1];
+        document.getElementById("price").textContent =
+            formatPrice(candleData.latest_price ?? latestCandle?.close);
+        document.getElementById("ourPriceTimestamp").textContent =
+            `Last update: ${candleData.latest_timestamp || latestCandle?.timestamp || "--"}`;
+        document.getElementById("olympReference").textContent =
+            candleData.provider === "Olymp Trade"
+                ? "Olymp Trade live quote verified"
+                : "Reference provider is Twelve Data; it is not an Olymp Trade quote.";
 
-        if (quoteResponse.ok) {
-
-            const quote =
-                await quoteResponse.json();
-
-            document.getElementById(
-                "price"
-            ).textContent =
-                formatPrice(quote.price);
-
-        }
-
-        await runAnalysis(symbol, timeframe);
+        await runAnalysis(symbol, timeframe, candleData);
 
         document.getElementById(
             "connectionStatus"
@@ -689,12 +765,18 @@ async function loadMarket() {
         ).innerHTML =
             `<li class="error">${escapeHtml(error.message)}</li>`;
 
+        candles = [];
+        drawChart();
+        document.getElementById("price").textContent = "--";
+        document.getElementById("ourPriceTimestamp").textContent = "Last update: --";
+        updateAnalysis({ signal: "WAIT", confidence: 0 });
+
     }
 
 }
 
 
-async function runAnalysis(symbol, timeframe) {
+async function runAnalysis(symbol, timeframe, sourceData) {
 
     if (!candles.length) {
         updateAnalysis({ signal: "WAIT", confidence: 0, explanation: "No verified candles are available." });
@@ -707,8 +789,10 @@ async function runAnalysis(symbol, timeframe) {
 
         timeframe:
             timeframeLabel(timeframe),
-
-        candles: candles
+        candles: candles,
+        provider: sourceData.provider,
+        source_status: sourceData.source_status,
+        data_source: sourceData.provider
 
     };
 
@@ -928,6 +1012,13 @@ async function checkHealth() {
 
         if (response.ok) {
 
+            const data = await response.json();
+            const provider = data.provider || {};
+            document.getElementById("providerLabel").textContent =
+                `Provider: ${provider.provider || "--"}`;
+            document.getElementById("sourceStatus").textContent =
+                `Source/verification: ${provider.source_status || "--"}`;
+
             document.getElementById(
                 "connectionStatus"
             ).textContent =
@@ -962,6 +1053,10 @@ async function loadAssets() {
         throw new Error("Asset list is unavailable");
     }
     const data = await response.json();
+    document.getElementById("providerLabel").textContent =
+        `Provider: ${data.provider_label || "--"}`;
+    document.getElementById("sourceStatus").textContent =
+        `Source/verification: ${data.provider === "olymptrade" ? "unavailable" : "verified"}`;
     const symbolSelect = document.getElementById("symbolInput");
     symbolSelect.innerHTML = "";
     (data.assets || []).forEach(asset => {
@@ -987,6 +1082,81 @@ resizeCanvas();
     }
 })();
 
+</script>
+
+<script>
+const scannerPanel = document.getElementById("scannerPanel");
+const scannerFab = document.getElementById("scannerFab");
+const scannerSymbol = document.getElementById("scannerSymbol");
+const scannerTimeframe = document.getElementById("scannerTimeframe");
+let scannerTimer = null;
+
+scannerFab.addEventListener("click", () => {
+    scannerPanel.hidden = !scannerPanel.hidden;
+});
+
+async function loadScannerOptions() {
+    const response = await fetch(`${API_BASE}/api/assets`);
+    const data = await response.json();
+    scannerSymbol.innerHTML = (data.assets || []).map(asset =>
+        `<option value="${escapeHtml(asset.symbol)}">${escapeHtml(asset.symbol)}</option>`
+    ).join("");
+    scannerTimeframe.innerHTML = (data.timeframes || []).map(item =>
+        `<option value="${item.seconds}">${escapeHtml(item.label)}</option>`
+    ).join("");
+    if (!scannerTimeframe.options.length) {
+        scannerTimeframe.innerHTML = '<option value="60">1 minute</option>';
+    }
+}
+
+function scannerText(data) {
+    const signal = document.getElementById("scannerSignal");
+    signal.textContent = data.signal || "WAIT";
+    signal.className = `scanner-signal ${(data.signal || "WAIT").toLowerCase()}`;
+    document.getElementById("scannerSource").textContent =
+        `Provider: ${data.provider || "Olymp Trade"} | Symbol: ${data.symbol || "--"} | Verification: ${data.source_status || "unavailable"}`;
+    document.getElementById("scannerDetails").textContent = data.status === "ready"
+        ? `Confidence: ${data.confidence}% | Signal: ${data.signal_timestamp || "--"} | Expiry: ${data.signal_expiry || "--"}`
+        : (data.reason || "No verified Olymp Trade data available.");
+}
+
+async function runScanner() {
+    const response = await fetch(`${API_BASE}/api/scanner/scan`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({symbol: scannerSymbol.value, timeframe_seconds: Number(scannerTimeframe.value), limit: 100})
+    });
+    const data = await response.json();
+    scannerText(data);
+    document.getElementById("scannerStatus").textContent = `Status: ${data.status || "unavailable"}`;
+}
+
+document.getElementById("startScan").addEventListener("click", async () => {
+    const response = await fetch(`${API_BASE}/api/scanner/start`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mode: "MANUAL"})});
+    const data = await response.json();
+    document.getElementById("scannerStatus").textContent = `Status: ${data.status || "stopped"}`;
+    if (data.enabled) {
+        await runScanner();
+        clearInterval(scannerTimer);
+        scannerTimer = setInterval(runScanner, 5000);
+    }
+});
+
+document.getElementById("stopScan").addEventListener("click", async () => {
+    clearInterval(scannerTimer);
+    const data = await (await fetch(`${API_BASE}/api/scanner/stop`, {method: "POST"})).json();
+    document.getElementById("scannerStatus").textContent = `Status: ${data.status}`;
+});
+
+document.getElementById("emergencyStop").addEventListener("click", async () => {
+    clearInterval(scannerTimer);
+    const data = await (await fetch(`${API_BASE}/api/scanner/emergency-stop`, {method: "POST"})).json();
+    document.getElementById("scannerStatus").textContent = `Status: ${data.status}`;
+    scannerText({status: "unavailable", signal: "WAIT", reason: "Emergency stop is active."});
+});
+
+loadScannerOptions().catch(error => {
+    document.getElementById("scannerDetails").textContent = error.message;
+});
 </script>
 
 </body>
