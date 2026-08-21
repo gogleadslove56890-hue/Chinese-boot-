@@ -13,7 +13,7 @@ from backend.market.assets import ASSETS, TIMEFRAMES
 from backend.market.fallback import FallbackMarketDataProvider
 from backend.market.olymptrade import OlympTradeProvider
 from backend.market.twelvedata import TwelveDataProvider
-from backend.market.yahoo import YahooFinanceProvider
+
 from backend.scanner import SUPPORTED_TIMEFRAMES, Scanner
 
 app = FastAPI(title="Chinese-boot", version="1.0.0")
