@@ -22,7 +22,7 @@ provider_name = "independent-fallback"
 configured_providers = []
 if os.getenv("TWELVE_DATA_API_KEY"):
     configured_providers.append(TwelveDataProvider())
-configured_providers.append(YahooFinanceProvider())
+configured_providers.append(OlympTradeProvider())
 market_provider = FallbackMarketDataProvider(configured_providers)
 audit_log = AuditLog()
 scanner = Scanner(market_provider, audit_log)
