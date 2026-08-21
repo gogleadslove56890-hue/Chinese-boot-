@@ -1,6 +1,11 @@
 import asyncio
 import os
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +20,6 @@ from backend.market.twelvedata import TwelveDataProvider
 from backend.scanner import SUPPORTED_TIMEFRAMES, Scanner
 
 app = FastAPI(title="Chinese-boot", version="1.0.0")
-ROOT = Path(__file__).resolve().parent.parent
 provider_name = "independent-fallback"
 configured_providers = []
 if os.getenv("TWELVE_DATA_API_KEY"):
