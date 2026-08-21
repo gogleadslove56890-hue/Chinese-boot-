@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: chinese-boot-1uvicorn-backend-app
+    branch: main
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: TWELVE_DATA_API_KEY
+        sync: false
+      - key: TWELVE_DATA_BASE_URL
+        value: https://api.twelvedata.com
+      - key: FRONTEND_ORIGINS
+        sync: false
